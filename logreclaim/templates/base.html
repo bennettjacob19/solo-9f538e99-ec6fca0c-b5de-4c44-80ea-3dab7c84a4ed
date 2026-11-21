@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Linux 日志空间回收{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <div>
+        <h1>Linux 日志空间回收</h1>
+        <p class="sub">已删除但仍被进程持有的日志 · 按设备号 + inode 去重 · 按实占块计量</p>
+      </div>
+    </div>
+    <div class="topmeta">
+      <span title="日志根目录">日志根：<code>{{ config.log_root }}</code></span>
+      <span title="通过 Unix socket 控制的演示写入进程">受控进程上限：{{ config.max_writers }}</span>
+    </div>
+  </header>
+
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul class="flashes">
+          {% for category, message in messages %}
+            <li class="flash flash-{{ category }}">{{ message }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <p>
+      只处理本地进程的真实文件描述符；空间按 <code>st_blocks × 512</code> 计，
+      不是文件表观长度。计划仅覆盖“全部持有者都在名单中”的日志。
+    </p>
+  </footer>
+</body>
+</html>

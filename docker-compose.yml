@@ -1,0 +1,32 @@
+services:
+  logreclaim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: logreclaim:local
+    container_name: logreclaim
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      LOG_ROOT: /data/logs
+      STATE_DIR: /data/state
+      DEMO_ENABLED: "1"
+      DEMO_WRITERS: "${DEMO_WRITERS:-1}"
+      DEMO_WRITERS_COUNT: "${DEMO_WRITERS_COUNT:-8}"
+      MAX_WRITERS: "8"
+      WRITE_CHUNK: "${WRITE_CHUNK:-8192}"
+      WRITE_INTERVAL: "${WRITE_INTERVAL:-0.25}"
+      WRITE_MAX_MB: "${WRITE_MAX_MB:-64}"
+      SCAN_SCOPE: "${SCAN_SCOPE:-agents}"
+      PLAN_TTL_SECONDS: "900"
+      SECRET_KEY: "${SECRET_KEY:-change-me-in-production}"
+    volumes:
+      - logdata:/data
+    # The app needs to see /proc of its own writers; they run in the same
+    # container and PID namespace.  Do not add pid: host unless the demo
+    # writers are also started there.
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+volumes:
+  logdata:

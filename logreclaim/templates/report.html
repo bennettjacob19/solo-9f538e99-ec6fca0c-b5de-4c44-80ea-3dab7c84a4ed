@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}{% if report.executed %}执行结果{% else %}未执行{% endif %}{% endblock %}
+
+{% block content %}
+<section class="panel">
+  {% if report.executed %}
+    <h2 class="ok">已执行</h2>
+    <p class="lead">{{ report.message }}</p>
+    <dl class="stats wide">
+      <div><dt>目标释放</dt><dd>{{ report.target_bytes|bytes }}（{{ report.target_bytes|mib }} MiB）</dd></div>
+      <div><dt>实际释放</dt><dd class="ok">{{ report.freed_bytes|bytes }}</dd></div>
+      <div><dt>仍占用的旧日志</dt><dd>{{ report.remaining|length }} 份</dd></div>
+      <div><dt>复查时间</dt><dd><code>{{ report.checked_at|ts }}</code></dd></div>
+    </dl>
+  {% else %}
+    <h2 class="warn">需要重算，本次未执行</h2>
+    <p class="lead">{{ report.message }}</p>
+    <ul class="reasons">
+      {% for reason in report.reasons %}<li>{{ reason }}</li>{% endfor %}
+    </ul>
+    <p><a class="btn" href="{{ url_for('index') }}">返回并重新计算</a></p>
+  {% endif %}
+</section>
+
+{% if report.executed %}
+<section class="panel">
+  <h2>进程重开结果</h2>
+  <table class="grid compact">
+    <thead><tr><th>进程</th><th>结果</th><th>明细</th></tr></thead>
+    <tbody>
+      {% for item in report.results %}
+        <tr>
+          <td>{{ item.name }} <code>{{ item.process.pid }}</code></td>
+          <td>
+            {% if item.ok %}<span class="tag tag-ok">已重开</span>
+            {% else %}<span class="tag tag-off">沿用原句柄</span>{% endif %}
+          </td>
+          <td>
+            <div>{{ item.detail }}</div>
+            {% if item.reopened %}
+              <ul class="sub">
+                {% for entry in item.reopened %}
+                  <li>
+                    {{ entry.get('path') }} —
+                    {% if entry.get('reopened') %}
+                      新 inode <code>{{ entry.get('new_inode') }}</code>
+                      {% if entry.get('created_new') %}（新建文件）{% endif %}
+                    {% else %}
+                      未重开：{{ entry.get('reason') }}
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>按原 inode 复查</h2>
+  <p class="hint">占用按确认时的块数计。</p>
+  <h3>已释放</h3>
+  <table class="grid compact">
+    <thead><tr><th>原路径</th><th>设备:inode</th><th class="num">确认时实占</th></tr></thead>
+    <tbody>
+      {% for log in report.released %}
+        <tr>
+          <td class="path">{{ log.path or '—' }}</td>
+          <td><code>{{ log.key.label }}</code></td>
+          <td class="num">{{ log.blocks|blocks }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="3" class="muted">没有完全释放的旧 inode。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>仍在占用</h3>
+  <table class="grid compact">
+    <thead><tr><th>原路径</th><th>设备:inode</th><th class="num">确认时实占</th><th>当前持有者</th></tr></thead>
+    <tbody>
+      {% for log in report.remaining %}
+        <tr>
+          <td class="path">{{ log.path or '—' }}</td>
+          <td><code>{{ log.key.label }}</code></td>
+          <td class="num">{{ log.blocks|blocks }}</td>
+          <td>
+            {% for label in report.remaining_holders.get(log.key, []) %}
+              <span class="pill pill-warn">{{ label }}</span>
+            {% else %}
+              <span class="muted">—</span>
+            {% endfor %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">没有残留的旧 inode。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><a class="btn ghost" href="{{ url_for('index') }}">返回概览</a></p>
+</section>
+{% endif %}
+{% endblock %}
