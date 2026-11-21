@@ -10,15 +10,59 @@
 {% endmacro %}
 
 {% block content %}
+{% if host_status and host_status.host_scope %}
+<section class="panel scan-banner" id="scan-banner" data-state="{{ host_status.state }}">
+  {% if host_status.state == 'running' %}
+    <p class="lead warn">
+      ⏳ 全机核对尚未完成：当前仅展示受控写入进程持有的已删除日志、实占与已知持有者，
+      其他进程持有的日志尚未计入。全机扫描正在后台进行，完成后本页整表自动更新。
+    </p>
+    <p class="hint">后台扫描轮次 <code>{{ host_status.attempt }}</code> · 表纪元
+      <code>{{ host_status.table_epoch }}</code> · 开始于 {{ host_status.started_at|ts }}</p>
+  {% elif host_status.state == 'idle' %}
+    <p class="lead warn">
+      ⏳ 全机核对尚未开始：当前仅展示受控写入进程持有的已删除日志、实占与已知持有者。
+      刷新本页即可启动后台全机扫描。
+    </p>
+  {% elif host_status.state == 'failed' %}
+    <p class="lead warn">
+      ⚠️ 全机扫描失败，当前保留首屏结果（仅受控写入进程）。
+      错误：<code>{{ host_status.error }}</code>
+    </p>
+    <form method="post" action="{{ url_for('scan_retry') }}">
+      <button class="btn ghost" type="submit">重试全机扫描</button>
+    </form>
+  {% elif host_status.state == 'ready' %}
+    <p class="lead ok">
+      ✅ 全机核对已完成（{{ host_status.finished_at|ts }}）：下表涵盖当前全部可见进程
+      持有的已删除日志。非受控进程只作为持有者展示，不会被纳入回收名单。
+    </p>
+  {% elif host_status.state == 'live' %}
+    <p class="lead ok">
+      ✅ 本表来自实时全机扫描：计划计算与确认执行都不会复用后台旧表。
+    </p>
+  {% endif %}
+</section>
+{% endif %}
+
 <section class="cards">
   <div class="card">
     <h2>磁盘现状</h2>
     <dl class="stats">
       <div><dt>已删除但仍打开的日志</dt><dd>{{ view.logs|length }} 份</dd></div>
       <div><dt>实际占用</dt><dd>{{ view.logs|sum(attribute='allocated')|bytes }}</dd></div>
-      <div><dt>可见进程</dt><dd>{{ view.scan.processes|length }} 个</dd></div>
+      <div><dt>可见进程</dt><dd>{{ view.scan.processes|length }} 个
+        {% if host_status and host_status.host_scope and not host_status.table_is_host_wide %}
+          <small class="muted">（仅受控）</small>{% endif %}</dd></div>
       <div><dt>受控写入进程</dt><dd>{{ view.agents_live|length }} / {{ view.agents_all|length }} 个存活</dd></div>
     </dl>
+    {% if host_status and host_status.host_scope and not host_status.table_is_host_wide %}
+      <p class="hint warn">
+        当前为受控写入进程首屏：只统计这些进程持有的已删除日志及其实占、持有者；
+        全机核对{% if host_status.state == 'failed' %}失败{% else %}尚未完成{% endif %}，
+        其他进程的持有情况暂不可见。
+      </p>
+    {% endif %}
     {% if view.scan.unreadable %}
       <p class="hint warn">
         有 {{ view.scan.unreadable|length }} 个进程的 fd 表不可读
@@ -48,7 +92,13 @@
 
 {% if view.logs %}
 <section class="panel">
-  <h2>被持有的已删除日志</h2>
+  <h2>被持有的已删除日志
+    {% if host_status and host_status.host_scope %}
+      <span class="tag {% if host_status.table_is_host_wide %}tag-ok{% else %}tag-off{% endif %}">
+        {%- if host_status.table_is_host_wide -%}全机结果{%- else -%}受控首屏（全机核对未完成）{%- endif -%}
+      </span>
+    {% endif %}
+  </h2>
   <table class="grid">
     <thead>
       <tr>
@@ -210,4 +260,31 @@
     </tbody>
   </table>
 </section>
+
+{% if host_status and host_status.host_scope and host_status.state == 'running' %}
+<script>
+(function () {
+  // Poll the lightweight status endpoint and reload the whole table once the
+  // background full-host scan finishes.  A failed scan is left on screen so
+  // the user can retry explicitly instead of being bounced around.
+  var banner = document.getElementById('scan-banner');
+  var expectedEpoch = {{ host_status.table_epoch }};
+  var attempts = 0;
+  var maxAttempts = 600; // safety stop after ~10 minutes
+  var timer = setInterval(function () {
+    attempts += 1;
+    if (attempts > maxAttempts) { clearInterval(timer); return; }
+    fetch('{{ url_for("scan_status") }}', { headers: { 'Accept': 'application/json' } })
+      .then(function (resp) { return resp.json(); })
+      .then(function (status) {
+        if (!status.running && status.table_epoch >= expectedEpoch) {
+          clearInterval(timer);
+          window.location.reload();
+        }
+      })
+      .catch(function () { /* transient: keep polling */ });
+  }, 1000);
+})();
+</script>
+{% endif %}
 {% endblock %}

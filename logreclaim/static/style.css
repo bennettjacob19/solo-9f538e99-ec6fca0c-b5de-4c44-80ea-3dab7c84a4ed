@@ -153,3 +153,8 @@ ul.sub { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 12
 
 .empty { text-align: left; }
 footer { max-width: 1180px; margin: 0 auto; padding: 0 24px 40px; color: var(--muted); font-size: 12px; }
+
+.scan-banner { padding: 14px 18px; }
+.scan-banner .lead { margin: 0 0 6px; }
+.scan-banner form { margin-top: 10px; }
+.scan-banner code { font-size: 12px; }

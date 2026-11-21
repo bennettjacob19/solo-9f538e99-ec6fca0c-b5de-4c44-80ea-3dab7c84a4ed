@@ -7,11 +7,15 @@ import os
 import time
 from typing import Optional
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, current_app, flash, jsonify, redirect, render_template, request, url_for
 
 from .config import Config
 from .controller import Controller
 from .procfs import block_report, human_bytes, mib_to_bytes
+
+
+def _controller() -> Controller:
+    return current_app.extensions["logreclaim"]
 
 
 def create_app(config: Optional[Config] = None) -> Flask:
@@ -41,19 +45,55 @@ def create_app(config: Optional[Config] = None) -> Flask:
 
     @app.get("/")
     def index():
-        view = controller.scan()
+        controller = _controller()
+        # In host scope this returns the controlled-writer first screen
+        # immediately and kicks off a background full-host scan.
+        view = controller.index_view()
         return render_template(
             "index.html",
             view=view,
+            host_status=view.host_status,
             plan=None,
             snapshot=None,
             target_mib="",
             error=None,
         )
 
+    @app.get("/scan/status")
+    def scan_status():
+        controller = _controller()
+        status = controller.host_scan_status()
+        return jsonify(
+            {
+                "state": status.state,
+                "table_epoch": status.table_epoch,
+                "attempt": status.attempt,
+                "running": status.is_running,
+                "failed": status.is_failed,
+                "host_wide": status.table_is_host_wide,
+                "error": status.error,
+                "started_at": status.started_at,
+                "finished_at": status.finished_at,
+            }
+        )
+
+    @app.post("/scan/retry")
+    def scan_retry():
+        controller = _controller()
+        if controller.config.scan_scope != "host":
+            flash("当前不是全机扫描模式，无需重试。", "warning")
+            return redirect(url_for("index"))
+        controller.retry_host_scan()
+        flash("已重新开始全机核对。", "ok")
+        return redirect(url_for("index"))
+
     @app.post("/plan")
     def plan_view():
+        controller = _controller()
+        # Planning always reads the machine in real time: never reuse a
+        # background table that could predate a rotation or reclamation.
         view = controller.scan()
+        host_status = view.host_status
         raw = (request.form.get("target_mib") or "").strip()
         error = None
         plan = None
@@ -67,6 +107,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
             return render_template(
                 "index.html",
                 view=view,
+                host_status=host_status,
                 plan=None,
                 snapshot=None,
                 target_mib=raw,
@@ -81,6 +122,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
         return render_template(
             "index.html",
             view=view,
+            host_status=host_status,
             plan=plan,
             snapshot=snapshot,
             target_mib=raw,
@@ -89,10 +131,13 @@ def create_app(config: Optional[Config] = None) -> Flask:
 
     @app.post("/confirm/<token>")
     def confirm(token: str):
+        controller = _controller()
         snap = controller.take_snapshot(token)
         if snap is None:
             flash("计划已过期或不存在，请重新计算。", "warning")
             return redirect(url_for("index"))
+        # execute() performs its own real-time full scan before touching
+        # anything, and bumps the table epoch afterwards.
         report = controller.execute(snap)
         return render_template("report.html", report=report, snap=snap), (
             409 if not report.executed else 200
@@ -103,7 +148,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
         if not cfg.demo_enabled:
             flash("演示操作已禁用。", "warning")
             return redirect(url_for("index"))
-        moved = controller.demo_rotate()
+        moved = _controller().demo_rotate()
         if moved:
             flash(
                 f"已轮转 {len(moved)} 个日志文件（写入进程仍持有原 inode）。",
@@ -118,7 +163,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
         if not cfg.demo_enabled:
             flash("演示操作已禁用。", "warning")
             return redirect(url_for("index"))
-        deleted = controller.demo_delete_old()
+        deleted = _controller().demo_delete_old()
         if deleted:
             total = sum(size for _, size in deleted)
             flash(
